@@ -142,7 +142,12 @@ def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos
         (relevant_tracking['x'] - relevant_tracking['ball_x']) * relevant_tracking['mult']
     )
     # Adjusted for towards center/sideline
-    relevant_tracking['mod_mod_y'] = relevant_tracking['mod_y'].abs()
+    starting_side = (
+        relevant_tracking.groupby(['gameId', 'playId', 'nflId'])['mod_y'].nth(0).apply(np.sign)
+        .replace({0: 1}).to_frame('sign').reset_index()
+    )
+    relevant_tracking = relevant_tracking.merge(starting_side)
+    relevant_tracking['mod_mod_y'] = relevant_tracking['mod_y'] * relevant_tracking['sign']
     return relevant_tracking
 
 
