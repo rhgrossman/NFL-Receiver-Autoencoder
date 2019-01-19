@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 VALID_POS = ['WR', 'TE', 'RB']
-TRACKING_FILE_STUB = 'Data/tracking_gameId_{}.csv'
+TRACKING_FILE_STUB = '{}/tracking_gameId_{}.csv'
 END_EVENTS = {'pass_arrived'}
 INDEX_COLS = ['gameId', 'playId', 'nflId']
 
@@ -79,10 +79,10 @@ def get_dict_of_sides(tracking_df, game_plays_df):
     return side_dict
 
 
-def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos_dict):
+def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos_dict, data_folder):
     """Function to get relevant routes for games."""
     # Get all tracking data for game, only where theres actually tracking data
-    tracking_df = pd.read_csv(TRACKING_FILE_STUB.format(game_id)).dropna(subset=['x'])
+    tracking_df = pd.read_csv(TRACKING_FILE_STUB.format(data_folder, game_id)).dropna(subset=['x'])
     # Get all passes for game
     game_passes_df = passes_df[passes_df['gameId'] == game_id]
     # Get all plays where there is tracking data fro
@@ -142,7 +142,7 @@ def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos
         (relevant_tracking['x'] - relevant_tracking['ball_x']) * relevant_tracking['mult']
     )
     # Adjusted for towards center/sideline
-    relevant_tracking['mod_mod_y'] = relevant_tracking['mod_y'] * relevant_tracking['mult']
+    relevant_tracking['mod_mod_y'] = relevant_tracking['mod_y'].abs()
     return relevant_tracking
 
 
