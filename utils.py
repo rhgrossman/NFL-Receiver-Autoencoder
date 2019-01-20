@@ -119,15 +119,16 @@ def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos
     merged_tracking = tracking_df.merge(ball_snap).merge(pass_arrived)
 
     rel_series_mask = (
-        ((merged_tracking['playerPos'] == 'C') | (merged_tracking['displayName'] == 'football')) &
+        (merged_tracking['playerPos'].isin(['G', 'T', 'C'])) &
         (merged_tracking['ball_snap'] == merged_tracking['frame.id'])
     )
 
     # Get info of centers/football at time of snap where we have locations
     filtered_df = merged_tracking[rel_series_mask].dropna(subset=['x', 'y'])
     # Sort by dir (football does not have dir, so will be last, so we get football location if poss
-    ball_info = filtered_df.sort_values('dir').groupby('playId', as_index=False).last()
-    ball_info = ball_info.rename(columns={'x': 'ball_x', 'y': 'ball_y'})
+    ball_info = filtered_df.sort_values('dir').groupby('playId').agg(
+        {'x': np.median, 'y': np.median})
+    ball_info = ball_info.rename(columns={'x': 'ball_x', 'y': 'ball_y'}).reset_index()
 
     relevant_tracking = merged_tracking[
         (merged_tracking['teamAbbr'] == merged_tracking['possessionTeam']) &
