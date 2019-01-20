@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-VALID_POS = ['WR', 'TE', 'RB']
+VALID_POS = ['WR']
 TRACKING_FILE_STUB = '{}/tracking_gameId_{}.csv'
 END_EVENTS = {'pass_arrived'}
 INDEX_COLS = ['gameId', 'playId', 'nflId']
@@ -57,26 +57,21 @@ def test_get_rel_plays():
 test_get_rel_plays()
 
 
+def get_sides(df):
+    """Helper function."""
+    df = df[df['event'] == 'ball_snap']
+    mean_sides = df.groupby('teamAbbr')['x'].mean()
+    return (mean_sides - mean_sides.mean()) * -1
+
+
 def get_dict_of_sides(tracking_df, game_plays_df):
     """Helper to get side of field for team/quarter pair."""
-    # Get location of center
-    rel_tracking = tracking_df[(tracking_df['playerPos'] == 'C') & (tracking_df['frame.id'] == 15)]
-    # Get location of center on first moment of play
-    x_pos_on_play = rel_tracking.groupby('playId')['x'].nth(0).to_frame('x_loc').reset_index()
-    # Merge with game play data
-    game_plays_df = game_plays_df.merge(x_pos_on_play)
-
-    rel_plays_df = get_relevant_plays(game_plays_df)
-
-    side_dict = rel_plays_df.groupby(['quarter', 'possessionTeam']).apply(get_side).to_dict()
-    teams = tracking_df['teamAbbr'].dropna().unique()
-    if len(teams) != 2:
-        raise ValueError
-    for i in game_plays_df['quarter'].unique():
-        for t in teams:
-            if (i, t) not in side_dict:
-                side_dict[(i, t)] = -side_dict[(i, list(set(teams).difference({t}))[0])]
-    return side_dict
+    joined_df = tracking_df.merge(game_plays_df[['playId', 'quarter']])
+    side_series = joined_df.groupby(['playId', 'quarter']).apply(get_sides)
+    if isinstance(side_series, pd.DataFrame):
+        side_series = side_series.stack()
+    side_dict = side_series.groupby(level=['quarter', 'teamAbbr']).apply(np.median).apply(np.sign)
+    return side_dict.to_dict()
 
 
 def get_routes_for_game(game_id, passes_df, plays_df, home_away_dict, player_pos_dict, data_folder):
