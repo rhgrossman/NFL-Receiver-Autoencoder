@@ -104,7 +104,7 @@ class TFBaseModel(object):
             restore_saver_flag=True,
             pretrained_dir='/hdd-1/pretrained_models/resnet_v2_101_2017_04_14/resnet_v2_101.ckpt',
             use_adaptive_lr=False,
-            lr_reduction=2,
+            lr_reduction=10,
             num_cycles=1,
 
     ):
@@ -230,10 +230,11 @@ class TFBaseModel(object):
                 else:
                     self.session.run(self.init)
                     step = 0
-                    print('restoring')
+                    
                     # time.sleep(1)
                     # print(self.restore_list)
                     if restore_pretrain:
+                        print('restoring')
                         self.restore_backbone(self.pretrained_dir, self.backbone_scope)
 
             if self.use_adaptive_lr:

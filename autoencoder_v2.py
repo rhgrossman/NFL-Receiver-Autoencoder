@@ -3,7 +3,7 @@ import sys
 
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-cuda_device = str(sys.argv[2])  # see issue #
+cuda_device = '0'  # see issue #
 os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
 
 import numpy as np
@@ -49,24 +49,20 @@ class rnn(TFBaseModel):
         return tf.exp(x + tf.expand_dims(self.log_x_encode_mean, 1)) - 1
 
     def get_input_tensors(self):
-        self.ids=tf.placeholder(tf.string, [None])
-
-        self.values = tf.placeholder(tf.float32, [None, self.feature_size])
-        self.differences = tf.placeholder(tf.float32, [None, self.feature_size])
-        self.is_nan = tf.placeholder(tf.float32, [None, self.feature_size])
-        self.band=tf.placeholder(tf.int32, [None, self.feature_size])
-
+        self.ids=tf.placeholder(tf.string, [None, 3])
+        self.values = tf.placeholder(tf.float32, [None, self.feature_size, 4])
+        self.target = tf.placeholder(tf.int32, [None, self.feature_size])
+        self.targets =tf.one_hot(self.target, 10)
         self.is_training = tf.placeholder(tf.bool, [])
         self.keep_prob = tf.placeholder(tf.float32, [])
 
 
 
     def rnn_encoder(self):
-        #print(self.log_x_encode.shape().as_list())
 
-        inputs=tf.concat([tf.expand_dims(self.values, axis=-1),
-                          tf.expand_dims(self.differences, axis=-1),
-                          tf.one_hot(self.band, 6)], axis=-1)
+        
+        inputs=tf.concat([self.values, self.targets], axis=-1)           
+        
         with tf.variable_scope('forward'):
             fw_cell = tf.contrib.cudnn_rnn.CudnnCompatibleGRUCell(self.hidden_dim)
             bw_cell = tf.contrib.cudnn_rnn.CudnnCompatibleGRUCell(self.hidden_dim)
@@ -88,9 +84,7 @@ class rnn(TFBaseModel):
     def rnn_decoder(self):
         state_adder =tf.tile(tf.expand_dims(self.state, axis=1), (1, self.feature_size, 1))
         #state_adder=tf.cast(state_adder, tf.float32)
-        features=tf.concat([tf.expand_dims(self.differences, axis=-1),
-                            tf.one_hot(self.band, 6),
-                            state_adder], axis=-1)
+        features=state_adder
 
         with tf.variable_scope('decoder'):
             fw_cell = tf.contrib.cudnn_rnn.CudnnCompatibleGRUCell(self.hidden_dim)
@@ -100,7 +94,8 @@ class rnn(TFBaseModel):
             ) # Set `time_major` accordingly
 
         intermediate = tf.concat([outputs[0], outputs[1]], axis=-1)
-        self.classification_outputs=tf.contrib.layers.conv1d(intermediate, 1, 1, activation_fn=None)
+        self.classification_outputs=tf.layers.conv1d(intermediate, 10, 1)
+        self.regression_outputs=tf.layers.conv1d(intermediate, 2, 1)
     #def dense(self):
     #    self.classification_outputs=tf.layers.dense(self.log_x_encode, 90, activation='linear')
 
@@ -109,9 +104,14 @@ class rnn(TFBaseModel):
         #self.dense()
         self.rnn_encoder()
         self.rnn_decoder()
-        self.loss=tf.reduce_mean(tf.multiply(
-            tf.math.abs(tf.squeeze(self.classification_outputs) - self.values), self.is_nan))
-
+        weights=tf.ones_like(self.classification_outputs)
+        loss=tf.reduce_sum(
+              tf.nn.sigmoid_cross_entropy_with_logits(labels=self.targets, logits=self.classification_outputs)*weights)/tf.reduce_sum(weights)
+        
+        loss2=tf.reduce_mean(
+            tf.abs(tf.squeeze(self.regression_outputs) - self.values[:, :, 1:3]))
+        self.loss=loss+.1*loss2
+                
         self.metric=self.loss
         self.prediction_tensors = {
             'state': self.state,
@@ -124,85 +124,72 @@ class rnn(TFBaseModel):
 
 if __name__ == '__main__':
     base_dir = './'
-    run_no="v2"
-    run_no = 'ae_allflux_fixed_16_{}'.format(run_no)
+    run_no="v6"
+    run_no = 'direction_targets_{}'.format(run_no)
     n_splits = 4
-
-    kf=KFold(n_splits=5, shuffle=True, random_state=117)
-    band=int(sys.argv[3])
-    train_ids=np.load('./data/processed3/all_ids.npy')
-    print(train_ids.shape)
     fold_no=0
-    fold_run=int(sys.argv[1])
-
-    for train_inx, val_inx in kf.split(train_ids):
-        fold_no+=1
-        if fold_no!=fold_run:
-            continue
-        print('device:', cuda_device)
-        checkpoint_dir = 'checkpoints/checkpoints_run_{}_fold_{}'.format(run_no, fold_no)
-        prediction_dir = 'predictions/predictions_run_{}_fold_{}'.format(run_no, fold_no)
+    checkpoint_dir = 'checkpoints/checkpoints_run_{}_fold_{}'.format(run_no, fold_no)
+    prediction_dir = 'predictions/predictions_run_{}_fold_{}'.format(run_no, fold_no)
 
 
-        batch_size = 256
-        dr = DataReader(data_dir='./data/processed3', train_data_dir='./data/train/',
-                        test_data_dir='./data/test/', val_size=96,
-                        num_classes=14, percent_augmented=1., train_inx=train_inx,
-                        val_inx=val_inx, seed=fold_no,  band=band)
-        # with tf.device('/device:GPU:1'):
-        nn = rnn(
-            reader=dr,
-            log_dir=os.path.join(base_dir, 'logs'),
-            checkpoint_dir=os.path.join(base_dir, checkpoint_dir),
-            prediction_dir=os.path.join(base_dir, prediction_dir),
-            optimizer='adamw',
-            learning_rate=.01,
-            batch_size=batch_size,
-            num_training_steps=1200000,
-            num_cycles=2,
-            early_stopping_steps= 3000,
-            warm_start_init_step=0,
-            regularization_constant=0,  # .000002,
-            keep_prob=1,
-            enable_parameter_averaging=True,
-            num_restarts=2,
-            min_steps_to_checkpoint=4000,
-            log_interval=10,
-            num_validation_batches=1,
-            grad_clip=20,
-            loss_averaging_window=int(1000),
-            backbone_scope='resnet_v2_50',  # 'InceptionResnetV2', #
-            initialized=False,
-            use_metric_for_eval= False,
-            use_adaptive_lr=False,
-            hidden_dim=64,
-            restore_saver_flag=False,
-            num_classes=14,
-            feature_size=200,
+    batch_size = 128
+    dr = DataReader(data_dir='./data/processed',
 
-        )
+                    seed=fold_no)
+    # with tf.device('/device:GPU:1'):
+    nn = rnn(
+        reader=dr,
+        log_dir=os.path.join(base_dir, 'logs'),
+        checkpoint_dir=os.path.join(base_dir, checkpoint_dir),
+        prediction_dir=os.path.join(base_dir, prediction_dir),
+        optimizer='adamw',
+        learning_rate=.001,
+        batch_size=batch_size,
+        num_training_steps=1200000,
+        num_cycles=2,
+        early_stopping_steps= 3000,
+        warm_start_init_step=0,
+        regularization_constant=0,  # .000002,
+        keep_prob=1,
+        enable_parameter_averaging=True,
+        num_restarts=2,
+        min_steps_to_checkpoint=4000,
+        log_interval=10,
+        num_validation_batches=1,
+        grad_clip=20,
+        loss_averaging_window=int(1000),
+        backbone_scope='resnet_v2_50',  # 'InceptionResnetV2', #
+        initialized=False,
+        use_metric_for_eval= False,
+        use_adaptive_lr=False,
+        hidden_dim=64,
+        restore_saver_flag=False,
+        num_classes=10,
+        feature_size=34,
 
-        rest_dir_name = 'name_to_restore'
-        rest_dir = './checkpoints/{}/'.format(rest_dir_name)
-        rest_dir = None
+    )
 
-        nn.fit(restore_pretrain=False, restore_dir=rest_dir)
-        nn.restore(averaged=False)
-        nn.predict(chunk_size=4, is_val=True)
-        nn.predict(chunk_size=4)
-        #nn.restore(averaged=False)
+    rest_dir_name = 'name_to_restore'
+    rest_dir = './checkpoints/{}/'.format(rest_dir_name)
+    rest_dir = None
 
-        #nn.predict(chunk_size=4, append=str(test_chunk))
-        #if test_chunk<1:
-        #    nn.predict(chunk_size=4, is_val=True)
+    nn.fit(restore_pretrain=False, restore_dir=None)
+    nn.restore(averaged=False)
+    nn.predict(chunk_size=128, is_val=True)
+    nn.predict(chunk_size=128)
+    #nn.restore(averaged=False)
 
-        # for i in range(8):
-        #    nn.predict(chunk_size=16, append='_{}'.format(i), test_aug=i)
-        #    nn.predict(chunk_size=16, is_val=True, append='_{}'.format(i), test_aug=i)
-        # print(cuda_device)
+    #nn.predict(chunk_size=4, append=str(test_chunk))
+    #if test_chunk<1:
+    #    nn.predict(chunk_size=4, is_val=True)
 
-        nn.close_session()
-        break
+    # for i in range(8):
+    #    nn.predict(chunk_size=16, append='_{}'.format(i), test_aug=i)
+    #    nn.predict(chunk_size=16, is_val=True, append='_{}'.format(i), test_aug=i)
+    # print(cuda_device)
+
+    nn.close_session()
+    
 
 
 
